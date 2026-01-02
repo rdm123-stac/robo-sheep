@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>🐺 Robo Sheep 🐑</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in { animation: fadeIn 0.3s ease-out; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!--
+    IMPORTANT (AI Categories):
+    This front-end expects a server endpoint at:
+      POST /api/generate-categories
+    that returns JSON like:
+      { "categories": [ { "category": "...", "words": ["...x10"] }, ...x3 ] }
+
+    The safest setup is a Firebase Cloud Function + Hosting rewrite that calls OpenAI.
+    (Do NOT put your OpenAI key in this HTML.)
+  -->
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyAo8kg4hliypAK7zm0UsPtn1PoKvFTjkBg",
+      authDomain: "robo-sheep.firebaseapp.com",
+      databaseURL: "https://robo-sheep-default-rtdb.firebaseio.com",
+      projectId: "robo-sheep",
+      storageBucket: "robo-sheep.firebasestorage.app",
+      messagingSenderId: "122251491544",
+      appId: "1:122251491544:web:3f5f5bd113feb7fbc6bfad"
+    };
+
+    // Initialize Firebase
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const database = firebase.database();
+
+    // Lucide Icons (simplified)
+    const Icon = ({ name, className = "w-6 h-6" }) => {
+      const icons = {
+        sparkles: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>,
+        users: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
+        play: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+        copy: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>,
+        check: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>,
+        home: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>,
+        eye: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>,
+        eyeOff: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>,
+        send: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>,
+        trophy: <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg>
+      };
+      return icons[name] || null;
+    };
+
+    function RoboSheepGame() {
+      const [screen, setScreen] = useState('home');
+      const [playerName, setPlayerName] = useState('');
+      const [lobbyCode, setLobbyCode] = useState('');
+      const [currentLobby, setCurrentLobby] = useState(null);
+      const [playerId, setPlayerId] = useState(null);
+      const [gameState, setGameState] = useState(null);
+      const [copied, setCopied] = useState(false);
+      const [showRole, setShowRole] = useState(false);
+      const [error, setError] = useState('');
+      const [customCategory, setCustomCategory] = useState('');
+      const [customWords, setCustomWords] = useState('');
+      const [aiCategories, setAiCategories] = useState([]);
+      const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+      const [aiPrompt, setAiPrompt] = useState('');
+      const [myClue, setMyClue] = useState('');
+      const [myVote, setMyVote] = useState('');
+      const [wolfGuess, setWolfGuess] = useState('');
+
+      const wordCategories = [
+        { category: "Fruits", words: ["Apple", "Banana", "Orange", "Grape", "Mango", "Peach", "Pear", "Cherry", "Kiwi", "Lemon"] },
+        { category: "Countries", words: ["France", "Japan", "Brazil", "Egypt", "Canada", "Italy", "Mexico", "India", "Spain", "Australia"] },
+        { category: "Animals", words: ["Lion", "Elephant", "Giraffe", "Penguin", "Dolphin", "Tiger", "Monkey", "Zebra", "Panda", "Koala"] },
+        { category: "Sports", words: ["Soccer", "Basketball", "Tennis", "Baseball", "Hockey", "Golf", "Swimming", "Boxing", "Skiing", "Surfing"] },
+        { category: "Colors", words: ["Red", "Blue", "Green", "Yellow", "Purple", "Orange", "Pink", "Black", "White", "Brown"] },
+        { category: "Movies", words: ["Inception", "Titanic", "Avatar", "Gladiator", "Jaws", "Rocky", "Frozen", "Shrek", "Jurassic Park", "Star Wars"] },
+        { category: "Foods", words: ["Pizza", "Burger", "Sushi", "Pasta", "Tacos", "Salad", "Steak", "Curry", "Sandwich", "Soup"] },
+        { category: "Professions", words: ["Doctor", "Teacher", "Engineer", "Chef", "Pilot", "Artist", "Lawyer", "Nurse", "Scientist", "Architect"] },
+        { category: "Vehicles", words: ["Car", "Bicycle", "Airplane", "Boat", "Train", "Motorcycle", "Bus", "Helicopter", "Scooter", "Truck"] },
+        { category: "Instruments", words: ["Piano", "Guitar", "Drums", "Violin", "Trumpet", "Flute", "Saxophone", "Harp", "Cello", "Clarinet"] },
+        { category: "Weather", words: ["Sunny", "Rainy", "Snowy", "Cloudy", "Windy", "Foggy", "Stormy", "Hazy", "Humid", "Icy"] },
+        { category: "Emotions", words: ["Happy", "Sad", "Angry", "Excited", "Nervous", "Calm", "Surprised", "Bored", "Proud", "Scared"] }
+      ];
+
+      useEffect(() => {
+        setPlayerId(`player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
+      }, []);
+
+      const generateLobbyCode = () => {
+        return Math.floor(1000 + Math.random() * 9000).toString();
+      };
+
+      const createLobby = async () => {
+        if (!playerName.trim()) {
+          setError('Please enter your name');
+          return;
+        }
+
+        const code = generateLobbyCode();
+        const lobby = {
+          code,
+          host: playerId,
+          players: [{ id: playerId, name: playerName.trim(), score: 0 }],
+          status: 'waiting',
+          createdAt: Date.now(),
+          roundNumber: 0
+        };
+
+        try {
+          await database.ref(`lobbies/${code}`).set(lobby);
+          setLobbyCode(code);
+          setCurrentLobby(lobby);
+          setScreen('lobby');
+          setError('');
+        } catch (err) {
+          setError('Failed to create lobby. Please try again.');
+        }
+      };
+
+      const joinLobby = async () => {
+        if (!playerName.trim()) {
+          setError('Please enter your name');
+          return;
+        }
+        if (!lobbyCode.trim()) {
+          setError('Please enter a lobby code');
+          return;
+        }
+
+        const code = lobbyCode.trim();
+
+        try {
+          const snapshot = await database.ref(`lobbies/${code}`).once('value');
+          if (!snapshot.exists()) {
+            setError('Lobby not found. Check the code and try again.');
+            return;
+          }
+
+          const lobby = snapshot.val();
+
+          if (lobby.status !== 'waiting') {
+            setError('This game has already started');
+            return;
+          }
+
+          if (lobby.players.some(p => p.id === playerId)) {
+            setCurrentLobby(lobby);
+            setScreen('lobby');
+            setError('');
+            return;
+          }
+
+          lobby.players.push({ id: playerId, name: playerName.trim(), score: 0 });
+          await database.ref(`lobbies/${code}`).set(lobby);
+
+          setCurrentLobby(lobby);
+          setScreen('lobby');
+          setError('');
+        } catch (err) {
+          setError('Failed to join lobby. Please try again.');
+        }
+      };
+
+      // Always listen to lobby updates when in a lobby
+      useEffect(() => {
+        if (!lobbyCode) return;
+
+        const lobbyRef = database.ref(`lobbies/${lobbyCode}`);
+        const listener = lobbyRef.on('value', (snapshot) => {
+          if (!snapshot.exists()) return;
+
+          const lobby = snapshot.val();
+          setCurrentLobby(lobby);
+
+          // If lobby resets to waiting, clean up game UI state unless user is on home/create/join
+          setScreen((prev) => {
+            const isMainMenu = (prev === 'home' || prev === 'create' || prev === 'join');
+            if (isMainMenu) return prev;
+
+            if (lobby.status === 'waiting') {
+              // Only kick back if we were in game flow screens
+              if (['game', 'clue', 'voting', 'wolf-guess', 'recap'].includes(prev)) {
+                setGameState(null);
+                setShowRole(false);
+                setMyClue('');
+                setMyVote('');
+                setWolfGuess('');
+                return 'lobby';
+              }
+              return prev;
+            }
+
+            return prev;
+          });
+        });
+
+        return () => lobbyRef.off('value', listener);
+      }, [lobbyCode]);
+
+      // Always listen to game updates (including recap) so screens never get stuck
+      useEffect(() => {
+        if (!lobbyCode) return;
+
+        const gameRef = database.ref(`games/${lobbyCode}`);
+        const listener = gameRef.on('value', (snapshot) => {
+          if (!snapshot.exists()) {
+            setGameState(null);
+            return;
+          }
+
+          const game = snapshot.val();
+          setGameState(game);
+
+          setScreen((prev) => {
+            // don't hijack home/create/join
+            if (prev === 'home' || prev === 'create' || prev === 'join') return prev;
+
+            if (game.phase === 'reveal') return 'game';
+            if (game.phase === 'clue') return 'clue';
+            if (game.phase === 'voting') return 'voting';
+            if (game.phase === 'wolf-guess') return 'wolf-guess';
+            if (game.phase === 'recap') return 'recap';
+
+            return prev;
+          });
+        });
+
+        return () => gameRef.off('value', listener);
+      }, [lobbyCode]);
+
+      // Auto-advance from REVEAL -> CLUE (leader triggers once)
+      useEffect(() => {
+        if (!gameState || !lobbyCode || !playerId) return;
+        if (gameState.phase !== 'reveal') return;
+
+        const leaderId = gameState.playerOrder?.[0];
+        if (leaderId !== playerId) return;
+
+        const REVEAL_MS = 8000; // tweak: 0 = immediate, 8000 = 8 seconds
+        const startedAt = gameState.startedAt || Date.now();
+        const elapsed = Date.now() - startedAt;
+        const remaining = Math.max(0, REVEAL_MS - elapsed);
+
+        const t = setTimeout(async () => {
+          try {
+            const phaseSnap = await database.ref(`games/${lobbyCode}/phase`).once('value');
+            if (phaseSnap.val() === 'reveal') {
+              await database.ref(`games/${lobbyCode}/phase`).set('clue');
+            }
+          } catch (e) {
+            console.error('auto-advance to clue failed:', e);
+          }
+        }, remaining);
+
+        return () => clearTimeout(t);
+      }, [gameState?.phase, gameState?.startedAt, lobbyCode, playerId]);
+
+      // AI categories via your server endpoint
+      const generateAICategories = async () => {
+        setIsGeneratingAI(true);
+        setError('');
+
+        try {
+          const response = await fetch("/api/generate-categories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: aiPrompt.trim() })
+          });
+
+          if (!response.ok) {
+            const txt = await response.text();
+            throw new Error(txt || "AI request failed");
+          }
+
+          const parsed = await response.json();
+
+          if (
+            parsed?.categories?.length === 3 &&
+            parsed.categories.every(c => c?.category && Array.isArray(c.words) && c.words.length === 10)
+          ) {
+            setAiCategories(parsed.categories);
+          } else {
+            setError("Invalid AI response format. Please try again.");
+          }
+        } catch (err) {
+          console.error("AI generation error:", err);
+          setError("Failed to generate AI categories. Make sure /api/generate-categories is set up.");
+        } finally {
+          setIsGeneratingAI(false);
+        }
+      };
+
+      const startGame = () => {
+        if (!currentLobby) return;
+
+        // Determine who picks category (round-robin)
+        const roundNum = (currentLobby.roundNumber || 0) + 1;
+        const orderStartIndex = (roundNum - 1) % currentLobby.players.length;
+
+        const orderedPlayers = [
+          ...currentLobby.players.slice(orderStartIndex),
+          ...currentLobby.players.slice(0, orderStartIndex)
+        ];
+
+        const categoryPickerId = orderedPlayers[0].id;
+
+        // Only category picker can select
+        if (playerId === categoryPickerId) {
+          setScreen('category-select');
+          setError('');
+        }
+      };
+
+      const confirmCategoryAndStartGame = async (selectedCategory) => {
+        if (!selectedCategory) {
+          setError('Please select or enter a category');
+          return;
+        }
+
+        const categorySet = selectedCategory;
+        const secretWordIndex = Math.floor(Math.random() * categorySet.words.length);
+
+        // Determine order for this round
+        const roundNum = (currentLobby.roundNumber || 0) + 1;
+        const orderStartIndex = (roundNum - 1) % currentLobby.players.length;
+        const orderedPlayers = [
+          ...currentLobby.players.slice(orderStartIndex),
+          ...currentLobby.players.slice(0, orderStartIndex)
+        ];
+
+        // Pick wolf from ordered players (ensures wolfId is from playerOrder)
+        const wolfIndex = Math.floor(Math.random() * orderedPlayers.length);
+
+        const game = {
+          lobbyCode,
+          category: categorySet.category,
+          words: categorySet.words,
+          secretWord: categorySet.words[secretWordIndex],
+          secretWordIndex,
+          wolfId: orderedPlayers[wolfIndex].id,
+          players: orderedPlayers,
+          playerOrder: orderedPlayers.map(p => p.id),
+          startedAt: Date.now(),
+          phase: 'reveal',
+          clues: {},
+          votes: {},
+          wolfGuess: null,
+          recap: null,
+          roundNumber: roundNum
+        };
+
+        try {
+          const updatedLobby = { ...currentLobby, status: 'playing', roundNumber: roundNum };
+          await database.ref(`lobbies/${lobbyCode}`).set(updatedLobby);
+          await database.ref(`games/${lobbyCode}`).set(game);
+
+          setGameState(game);
+          setScreen('game');
+          setError('');
+        } catch (err) {
+          console.error(err);
+          setError('Failed to start game. Please try again.');
+        }
+      };
+
+      const startCluePhase = async () => {
+        if (!gameState) return;
+        try {
+          setError('');
+          await database.ref(`games/${lobbyCode}/phase`).set('clue');
+        } catch (err) {
+          console.error('Start clue phase error:', err);
+          setError('Failed to start clue phase. Please try again.');
+        }
+      };
+
+      const submitClue = async () => {
+        if (!myClue.trim()) {
+          setError('Please enter a clue');
+          return;
+        }
+
+        try {
+          setError('');
+          await database.ref(`games/${lobbyCode}/clues/${playerId}`).set(myClue.trim());
+
+          // Check if all players have submitted (use fresh state)
+          const gameSnapshot = await database.ref(`games/${lobbyCode}`).once('value');
+          const currentGame = gameSnapshot.val();
+          if (!currentGame) return;
+
+          const clues = currentGame.clues || {};
+          const clueCount = Object.keys(clues).length;
+
+          if (clueCount >= currentGame.players.length) {
+            await database.ref(`games/${lobbyCode}/phase`).set('voting');
+          }
+        } catch (err) {
+          console.error('Submit clue error:', err);
+          setError('Failed to submit clue. Please try again.');
+        }
+      };
+
+      const submitVote = async (votedPlayerId) => {
+        try {
+          setError('');
+          await database.ref(`games/${lobbyCode}/votes/${playerId}`).set(votedPlayerId);
+          setMyVote(votedPlayerId);
+
+          // Use fresh game snapshot to avoid stale gameState races
+          const gameSnapshot = await database.ref(`games/${lobbyCode}`).once('value');
+          const currentGame = gameSnapshot.val();
+          if (!currentGame) return;
+
+          const votes = currentGame.votes || {};
+          if (Object.keys(votes).length >= currentGame.players.length) {
+            await database.ref(`games/${lobbyCode}/phase`).set('wolf-guess');
+          }
+        } catch (err) {
+          console.error(err);
+          setError('Failed to submit vote.');
+        }
+      };
+
+      // FIXED: wolf guess now does one atomic update + transitions cleanly (prevents getting stuck)
+      const submitWolfGuess = async (guessedWord) => {
+        try {
+          setError('');
+
+          // Always compute from fresh DB state (not possibly-stale React state)
+          const [gameSnap, lobbySnap] = await Promise.all([
+            database.ref(`games/${lobbyCode}`).once('value'),
+            database.ref(`lobbies/${lobbyCode}`).once('value'),
+          ]);
+
+          const game = gameSnap.val();
+          const lobby = lobbySnap.val();
+
+          if (!game || !lobby) throw new Error('Game or lobby missing');
+          if (game.wolfGuess != null) return; // already guessed
+
+          const votes = game.votes || {};
+          const voteCount = {};
+          Object.values(votes).forEach(votedId => {
+            voteCount[votedId] = (voteCount[votedId] || 0) + 1;
+          });
+
+          let mostVotedId = null;
+          let maxVotes = -1;
+          Object.entries(voteCount).forEach(([id, count]) => {
+            if (count > maxVotes) {
+              maxVotes = count;
+              mostVotedId = id;
+            }
+          });
+
+          const wolfCaught = mostVotedId === game.wolfId;
+          const wolfGuessedCorrect = guessedWord === game.secretWord;
+
+          // Update scores based on lobby.players (source of truth for scores)
+          const updatedLobbyPlayers = (lobby.players || []).map(p => {
+            let scoreAdd = 0;
+
+            if (p.id === game.wolfId) {
+              // Wolf scoring
+              if (!wolfCaught && wolfGuessedCorrect) scoreAdd = 4;
+              else if (wolfCaught && wolfGuessedCorrect) scoreAdd = 1;
+            } else {
+              // Sheep scoring
+              if (wolfCaught) scoreAdd += 1;
+              if (!wolfGuessedCorrect) scoreAdd += 1;
+            }
+
+            return { ...p, score: (p.score || 0) + scoreAdd };
+          });
+
+          // Atomic multi-path update so everyone transitions cleanly
+          const updates = {};
+          updates[`lobbies/${lobbyCode}/players`] = updatedLobbyPlayers;
+          updates[`games/${lobbyCode}/wolfGuess`] = guessedWord;
+          updates[`games/${lobbyCode}/recap`] = {
+            wolfCaught,
+            wolfGuessedCorrect,
+            mostVotedId,
+            wolfId: game.wolfId
+          };
+          updates[`games/${lobbyCode}/phase`] = 'recap';
+
+          await database.ref().update(updates);
+
+          // optional immediate local transition (listener will also do it)
+          setScreen('recap');
+        } catch (err) {
+          console.error('submitWolfGuess error:', err);
+          setError('Failed to submit guess.');
+        }
+      };
+
+      const nextRound = async () => {
+        try {
+          const lobbySnap = await database.ref(`lobbies/${lobbyCode}`).once('value');
+          const lobby = lobbySnap.val();
+          if (!lobby) return;
+
+          const resetLobby = { ...lobby, status: 'waiting' };
+          await database.ref(`lobbies/${lobbyCode}`).set(resetLobby);
+          await database.ref(`games/${lobbyCode}`).remove();
+
+          setGameState(null);
+          setShowRole(false);
+          setMyClue('');
+          setMyVote('');
+          setWolfGuess('');
+          setAiCategories([]);
+          setAiPrompt('');
+          setError('');
+
+          // Determine next category picker based on NEXT round
+          const nextRoundNum = (resetLobby.roundNumber || 0) + 1;
+          const orderStartIndex = (nextRoundNum - 1) % resetLobby.players.length;
+          const orderedPlayers = [
+            ...resetLobby.players.slice(orderStartIndex),
+            ...resetLobby.players.slice(0, orderStartIndex)
+          ];
+          const categoryPickerId = orderedPlayers[0].id;
+
+          if (playerId === categoryPickerId) {
+            setScreen('category-select');
+          } else {
+            setScreen('lobby');
+          }
+        } catch (err) {
+          console.error(err);
+          setError('Failed to start next round.');
+        }
+      };
+
+      const copyCode = () => {
+        navigator.clipboard.writeText(lobbyCode);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      };
+
+      const returnHome = () => {
+        setScreen('home');
+        setPlayerName('');
+        setLobbyCode('');
+        setCurrentLobby(null);
+        setGameState(null);
+        setShowRole(false);
+        setError('');
+        setCustomCategory('');
+        setCustomWords('');
+        setAiCategories([]);
+        setIsGeneratingAI(false);
+        setAiPrompt('');
+        setMyClue('');
+        setMyVote('');
+        setWolfGuess('');
+      };
+
+      // HOME SCREEN
+      if (screen === 'home') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <div className="text-center mb-8">
+                <div className="inline-block bg-gradient-to-r from-blue-400 to-purple-500 p-4 rounded-2xl mb-4">
+                  <Icon name="sparkles" className="w-16 h-16 text-white" />
+                </div>
+                <h1 className="text-4xl font-bold text-gray-800 mb-2">🐺 Robo Sheep 🐑</h1>
+                <p className="text-gray-600">Find the wolf in sheep's clothing</p>
+              </div>
+
+              <div className="space-y-4">
+                <button
+                  onClick={() => setScreen('create')}
+                  className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-xl transition-all transform hover:scale-105 shadow-lg"
+                >
+                  Create New Game
+                </button>
+                <button
+                  onClick={() => setScreen('join')}
+                  className="w-full bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white font-bold py-4 px-6 rounded-xl transition-all transform hover:scale-105 shadow-lg"
+                >
+                  Join Game
+                </button>
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-gray-200">
+                <h3 className="font-bold text-gray-800 mb-3 text-sm">How to Play:</h3>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-gray-600">
+                  <li>One player is secretly the wolf 🐺</li>
+                  <li>Players submit clues about their word</li>
+                  <li>Vote on who you think is the wolf</li>
+                  <li>Wolf guesses the secret word</li>
+                  <li>Score points based on results!</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // CREATE SCREEN
+      if (screen === 'create') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <button onClick={returnHome} className="mb-6 text-gray-600 hover:text-gray-800 flex items-center gap-2">
+                <Icon name="home" className="w-4 h-4" />
+                Back
+              </button>
+
+              <h2 className="text-3xl font-bold text-gray-800 mb-6">Create Game</h2>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Your Name</label>
+                  <input
+                    type="text"
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && createLobby()}
+                    placeholder="Enter your name"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none text-lg"
+                    maxLength={20}
+                  />
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  onClick={createLobby}
+                  className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg"
+                >
+                  Create Lobby
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // JOIN SCREEN
+      if (screen === 'join') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <button onClick={returnHome} className="mb-6 text-gray-600 hover:text-gray-800 flex items-center gap-2">
+                <Icon name="home" className="w-4 h-4" />
+                Back
+              </button>
+
+              <h2 className="text-3xl font-bold text-gray-800 mb-6">Join Game</h2>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Your Name</label>
+                  <input
+                    type="text"
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    placeholder="Enter your name"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-purple-500 focus:outline-none text-lg"
+                    maxLength={20}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Lobby Code</label>
+                  <input
+                    type="text"
+                    value={lobbyCode}
+                    onChange={(e) => setLobbyCode(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && joinLobby()}
+                    placeholder="1234"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-purple-500 focus:outline-none text-lg font-mono"
+                    maxLength={4}
+                  />
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  onClick={joinLobby}
+                  className="w-full bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg"
+                >
+                  Join Lobby
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // LOBBY SCREEN
+      if (screen === 'lobby' && currentLobby) {
+        const roundNum = (currentLobby.roundNumber || 0) + 1;
+        const orderStartIndex = (roundNum - 1) % currentLobby.players.length;
+        const orderedPlayers = [
+          ...currentLobby.players.slice(orderStartIndex),
+          ...currentLobby.players.slice(0, orderStartIndex)
+        ];
+        const categoryPicker = orderedPlayers[0];
+        const isCategoryPicker = playerId === categoryPicker.id;
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <button onClick={returnHome} className="mb-6 text-gray-600 hover:text-gray-800 flex items-center gap-2">
+                <Icon name="home" className="w-4 h-4" />
+                Leave
+              </button>
+
+              <div className="text-center mb-6">
+                <h2 className="text-3xl font-bold text-gray-800 mb-3">Game Lobby</h2>
+                <div className="inline-flex items-center gap-2 bg-gradient-to-r from-purple-100 to-pink-100 px-6 py-3 rounded-xl">
+                  <p className="text-2xl font-bold text-purple-800 font-mono">{lobbyCode}</p>
+                  <button onClick={copyCode} className="p-2 hover:bg-white/50 rounded-lg transition-colors">
+                    <Icon name={copied ? "check" : "copy"} className="w-5 h-5 text-purple-600" />
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600 mt-2">Share this code with players</p>
+              </div>
+
+              {currentLobby.roundNumber > 0 && (
+                <div className="mb-6 bg-yellow-50 border-2 border-yellow-200 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-yellow-800 text-center">
+                    Round {roundNum} - {categoryPicker.name} is choosing the category
+                  </p>
+                </div>
+              )}
+
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <Icon name="users" className="w-5 h-5 text-gray-700" />
+                  <h3 className="font-bold text-gray-800">Players ({currentLobby.players.length})</h3>
+                </div>
+                <div className="space-y-2">
+                  {currentLobby.players
+                    .slice()
+                    .sort((a, b) => (b.score || 0) - (a.score || 0))
+                    .map((player) => (
+                      <div
+                        key={player.id}
+                        className="bg-gradient-to-r from-gray-50 to-gray-100 px-4 py-3 rounded-xl flex items-center justify-between"
+                      >
+                        <span className="font-semibold text-gray-800">{player.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold">
+                            {player.score || 0} pts
+                          </span>
+                          {player.id === currentLobby.host && (
+                            <span className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full font-bold">
+                              HOST
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+
+              {isCategoryPicker ? (
+                <>
+                  <button
+                    onClick={startGame}
+                    disabled={currentLobby.players.length < 3}
+                    className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <Icon name="play" className="w-5 h-5" />
+                    {currentLobby.roundNumber === 0 ? 'Start Game' : 'Choose Category'}
+                  </button>
+                  {currentLobby.players.length < 3 && (
+                    <p className="text-sm text-center text-gray-600 mt-3">
+                      Need at least 3 players to start
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="bg-purple-50 border-2 border-purple-200 px-4 py-3 rounded-xl text-center">
+                  <p className="text-purple-800 font-semibold">
+                    Waiting for {categoryPicker.name} to choose category...
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // CATEGORY SELECT SCREEN
+      if (screen === 'category-select') {
+        const randomCategories = [...wordCategories].sort(() => Math.random() - 0.5).slice(0, 3);
+        const displayCategories = aiCategories.length > 0 ? aiCategories : randomCategories;
+
+        const handleCustomCategory = () => {
+          if (!customCategory.trim()) {
+            setError('Please enter a category name');
+            return;
+          }
+
+          const wordsArray = customWords.split(',').map(w => w.trim()).filter(w => w);
+
+          if (wordsArray.length !== 10) {
+            setError('Please enter exactly 10 words separated by commas');
+            return;
+          }
+
+          const categorySet = {
+            category: customCategory.trim(),
+            words: wordsArray
+          };
+
+          confirmCategoryAndStartGame(categorySet);
+        };
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in overflow-y-auto" style={{maxHeight: '90vh'}}>
+              <button
+                onClick={() => {
+                  setScreen('lobby');
+                  setAiCategories([]);
+                  setError('');
+                  setAiPrompt('');
+                }}
+                className="mb-6 text-gray-600 hover:text-gray-800 flex items-center gap-2"
+              >
+                <Icon name="home" className="w-4 h-4" />
+                Back to Lobby
+              </button>
+
+              <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Choose Category</h2>
+
+              <div className="mb-4 space-y-3">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    AI Theme (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    placeholder="e.g., Kid friendly, 80s nostalgia, science topics..."
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-pink-500 focus:outline-none text-sm"
+                    maxLength={50}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Tell AI what kind of categories you want</p>
+                </div>
+
+                <button
+                  onClick={generateAICategories}
+                  disabled={isGeneratingAI}
+                  className="w-full bg-gradient-to-r from-pink-500 to-orange-500 hover:from-pink-600 hover:to-orange-600 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Icon name="sparkles" className="w-5 h-5" />
+                  {isGeneratingAI ? 'Generating AI Categories...' : 'Generate AI Categories'}
+                </button>
+                {aiCategories.length > 0 && (
+                  <p className="text-xs text-center text-green-600 mt-2 font-semibold">
+                    ✨ AI-generated categories ready!
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-3 mb-6">
+                <p className="text-sm font-semibold text-gray-700 mb-3">
+                  {aiCategories.length > 0 ? 'AI Generated:' : 'Quick Start Options:'}
+                </p>
+                {displayCategories.map((cat, index) => (
+                  <button
+                    key={index}
+                    onClick={() => confirmCategoryAndStartGame(cat)}
+                    className="w-full bg-gradient-to-r from-purple-100 to-pink-100 hover:from-purple-200 hover:to-pink-200 text-purple-900 font-semibold py-4 px-6 rounded-xl transition-all border-2 border-purple-300"
+                  >
+                    {cat.category}
+                  </button>
+                ))}
+              </div>
+
+              <div className="border-t-2 border-gray-200 pt-6">
+                <p className="text-sm font-semibold text-gray-700 mb-3">Custom Category:</p>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Category Name</label>
+                    <input
+                      type="text"
+                      value={customCategory}
+                      onChange={(e) => setCustomCategory(e.target.value)}
+                      placeholder="e.g., Video Games"
+                      className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                      maxLength={30}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      10 Words (separated by commas)
+                    </label>
+                    <textarea
+                      value={customWords}
+                      onChange={(e) => setCustomWords(e.target.value)}
+                      placeholder="Mario, Zelda, Sonic, Tetris, Minecraft, Fortnite, Pokemon, Roblox, FIFA, Overwatch"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-sm h-24 resize-none"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {customWords.split(',').filter(w => w.trim()).length} / 10 words
+                    </p>
+                  </div>
+
+                  {error && (
+                    <div className="bg-red-50 border-2 border-red-200 text-red-700 px-3 py-2 rounded-lg text-xs">
+                      {error}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleCustomCategory}
+                    className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-lg"
+                  >
+                    Start with Custom Category
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // GAME REVEAL SCREEN
+      if (screen === 'game' && gameState) {
+        const isWolf = gameState.wolfId === playerId;
+        const myPlayerIndex = gameState.playerOrder.indexOf(playerId);
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <div className="text-center mb-8">
+                <h2 className="text-3xl font-bold text-gray-800 mb-2">Round {gameState.roundNumber}</h2>
+                <p className="text-gray-600">Keep your screen private</p>
+                <p className="text-xs text-gray-500 mt-2">
+                  Clue phase starts automatically in a few seconds…
+                </p>
+              </div>
+
+              <div className="mb-8">
+                <div className="bg-gradient-to-r from-purple-100 to-pink-100 rounded-2xl p-6 text-center">
+                  <p className="text-sm text-purple-700 font-semibold mb-3">YOUR ROLE</p>
+
+                  {!showRole ? (
+                    <button
+                      onClick={() => setShowRole(true)}
+                      className="bg-white hover:bg-gray-50 text-purple-700 font-bold py-4 px-8 rounded-xl transition-all shadow-md flex items-center gap-3 mx-auto"
+                    >
+                      <Icon name="eye" className="w-5 h-5" />
+                      Reveal My Role
+                    </button>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className={`${isWolf ? 'bg-red-500' : 'bg-green-500'} text-white py-4 px-6 rounded-xl`}>
+                        <p className="text-2xl font-bold mb-2">
+                          {isWolf ? '🐺 You are the WOLF' : '🐑 You are a SHEEP'}
+                        </p>
+                        <p className="text-sm">You are #{myPlayerIndex + 1} in order</p>
+                      </div>
+
+                      <div className="bg-white rounded-xl p-4">
+                        <p className="text-sm font-semibold text-gray-700 mb-3">
+                          Category: {gameState.category}
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {gameState.words.map((word, index) => (
+                            <div
+                              key={index}
+                              className={`px-3 py-2 rounded-lg font-semibold text-sm ${
+                                !isWolf && word === gameState.secretWord
+                                  ? 'bg-yellow-400 text-yellow-900 border-2 border-yellow-600'
+                                  : 'bg-gray-100 text-gray-700'
+                              }`}
+                            >
+                              {word}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-gray-700">
+                        {isWolf
+                          ? 'Try to figure out which word is secret and blend in!'
+                          : 'Give clues about the highlighted word without being too obvious!'}
+                      </p>
+
+                      <button
+                        onClick={() => setShowRole(false)}
+                        className="text-purple-600 hover:text-purple-700 text-sm flex items-center gap-1 mx-auto"
+                      >
+                        <Icon name="eyeOff" className="w-4 h-4" />
+                        Hide
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <h3 className="font-bold text-gray-800 mb-3">Turn Order:</h3>
+                <div className="space-y-2">
+                  {gameState.players.map((player, index) => (
+                    <div
+                      key={player.id}
+                      className={`px-4 py-3 rounded-xl flex items-center justify-between ${
+                        player.id === playerId
+                          ? 'bg-gradient-to-r from-blue-100 to-purple-100 border-2 border-purple-300'
+                          : 'bg-gray-50'
+                      }`}
+                    >
+                      <span className="font-semibold text-gray-800">
+                        #{index + 1} - {player.name}
+                        {player.id === playerId && ' (You)'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Optional manual override button (kept) */}
+              {myPlayerIndex === 0 && (
+                <button
+                  onClick={startCluePhase}
+                  className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-lg"
+                >
+                  Start Clue Phase (Manual)
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // CLUE SUBMISSION SCREEN
+      if (screen === 'clue' && gameState) {
+        const hasSubmitted = gameState.clues && gameState.clues[playerId];
+        const isWolf = gameState.wolfId === playerId;
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in overflow-y-auto" style={{maxHeight: '90vh'}}>
+              <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Submit Your Clue</h2>
+
+              <div className="mb-6 bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-purple-700 mb-3">Category: {gameState.category}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {gameState.words.map((word, index) => (
+                    <div
+                      key={index}
+                      className={`px-3 py-2 rounded-lg font-semibold text-sm ${
+                        !isWolf && word === gameState.secretWord
+                          ? 'bg-yellow-400 text-yellow-900 border-2 border-yellow-600'
+                          : 'bg-white text-gray-700 border border-gray-200'
+                      }`}
+                    >
+                      {word}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mb-6 bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
+                <p className="text-sm text-blue-800 text-center">
+                  Give a one-word clue about your word (or pretend if you're the wolf!)
+                </p>
+              </div>
+
+              {!hasSubmitted ? (
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    value={myClue}
+                    onChange={(e) => setMyClue(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && submitClue()}
+                    placeholder="Enter your clue..."
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none text-lg"
+                    maxLength={30}
+                  />
+                  <button
+                    onClick={submitClue}
+                    disabled={!myClue.trim()}
+                    className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Icon name="send" className="w-5 h-5" />
+                    Submit Clue
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 text-center">
+                  <Icon name="check" className="w-8 h-8 text-green-600 mx-auto mb-2" />
+                  <p className="text-green-800 font-semibold">Clue submitted!</p>
+                  <p className="text-sm text-green-700 mt-2">Waiting for other players...</p>
+                </div>
+              )}
+
+              <div className="mt-6">
+                <h3 className="font-bold text-gray-800 mb-3">Turn Order & Clues:</h3>
+                <div className="space-y-2">
+                  {gameState.players.map((player, index) => {
+                    const clue = gameState.clues?.[player.id];
+                    return (
+                      <div
+                        key={player.id}
+                        className={`px-4 py-3 rounded-xl flex items-center justify-between ${
+                          player.id === playerId
+                            ? 'bg-gradient-to-r from-blue-100 to-purple-100 border-2 border-purple-300'
+                            : 'bg-gray-50'
+                        }`}
+                      >
+                        <div>
+                          <span className="font-semibold text-gray-800">
+                            #{index + 1} - {player.name}
+                            {player.id === playerId && ' (You)'}
+                          </span>
+                          {clue && (
+                            <div className="text-blue-600 font-semibold text-sm mt-1">
+                              "{clue}"
+                            </div>
+                          )}
+                        </div>
+                        {!clue && (
+                          <span className="text-gray-400 text-sm">Waiting...</span>
+                        )}
+                        {clue && (
+                          <Icon name="check" className="w-5 h-5 text-green-600" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {error && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // VOTING SCREEN
+      if (screen === 'voting' && gameState) {
+        const hasVoted = gameState.votes && gameState.votes[playerId];
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Vote for the Wolf</h2>
+
+              <div className="mb-6 bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
+                <p className="text-sm text-orange-800 text-center">
+                  Who do you think is the wolf? 🐺
+                </p>
+              </div>
+
+              {!hasVoted ? (
+                <div className="space-y-2 mb-6">
+                  {gameState.players.map((player) => (
+                    <button
+                      key={player.id}
+                      onClick={() => submitVote(player.id)}
+                      className="w-full bg-gradient-to-r from-gray-50 to-gray-100 hover:from-orange-100 hover:to-orange-200 px-4 py-3 rounded-xl transition-all border-2 border-gray-300 hover:border-orange-300"
+                    >
+                      <span className="font-semibold text-gray-800">{player.name}</span>
+                      {gameState.clues?.[player.id] && (
+                        <span className="text-sm text-blue-600 ml-2">- "{gameState.clues[player.id]}"</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 text-center mb-6">
+                  <Icon name="check" className="w-8 h-8 text-green-600 mx-auto mb-2" />
+                  <p className="text-green-800 font-semibold">Vote submitted!</p>
+                  <p className="text-sm text-green-700 mt-2">Waiting for other players...</p>
+                </div>
+              )}
+
+              <div className="mb-6">
+                <h3 className="font-bold text-gray-800 mb-3">Voting Progress:</h3>
+                <div className="space-y-2">
+                  {gameState.players.map((player) => {
+                    const voted = gameState.votes?.[player.id];
+                    return (
+                      <div key={player.id} className="bg-gray-50 px-4 py-3 rounded-xl flex items-center justify-between">
+                        <span className="font-semibold text-gray-800">{player.name}</span>
+                        {voted ? (
+                          <Icon name="check" className="w-5 h-5 text-green-600" />
+                        ) : (
+                          <span className="text-gray-400 text-sm">Voting...</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {error && (
+                <div className="bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // WOLF GUESS SCREEN
+      if (screen === 'wolf-guess' && gameState) {
+        const isWolf = gameState.wolfId === playerId;
+        const hasGuessed = gameState.wolfGuess !== null && gameState.wolfGuess !== undefined;
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Wolf's Guess</h2>
+
+              {isWolf && !hasGuessed ? (
+                <div>
+                  <div className="mb-6 bg-red-50 border-2 border-red-200 rounded-xl p-4">
+                    <p className="text-sm text-red-800 text-center">
+                      🐺 Which word is the secret word?
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {gameState.words.map((word, index) => (
+                      <button
+                        key={index}
+                        onClick={() => submitWolfGuess(word)}
+                        className="bg-gradient-to-r from-gray-50 to-gray-100 hover:from-red-100 hover:to-red-200 px-3 py-3 rounded-lg font-semibold text-sm transition-all border-2 border-gray-300 hover:border-red-300"
+                      >
+                        {word}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6 text-center">
+                  <p className="text-blue-800 font-semibold text-lg mb-2">
+                    {isWolf ? 'Guess submitted!' : 'Waiting for wolf to guess...'}
+                  </p>
+                  <p className="text-sm text-blue-700">
+                    Results coming soon!
+                  </p>
+                </div>
+              )}
+
+              {error && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // RECAP SCREEN
+      if (screen === 'recap' && gameState && gameState.recap) {
+        const { wolfCaught, wolfGuessedCorrect, mostVotedId, wolfId } = gameState.recap;
+        const wolf = gameState.players.find(p => p.id === wolfId);
+        const mostVoted = gameState.players.find(p => p.id === mostVotedId);
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <div className="text-center mb-6">
+                <Icon name="trophy" className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
+                <h2 className="text-3xl font-bold text-gray-800 mb-2">Round {gameState.roundNumber} Results</h2>
+              </div>
+
+              <div className="space-y-4 mb-6">
+                <div className={`${wolfCaught ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'} border-2 rounded-xl p-4`}>
+                  <p className="font-bold text-lg mb-2">
+                    {wolfCaught ? '✅ Wolf Was Caught!' : '❌ Wolf Was NOT Caught'}
+                  </p>
+                  <p className="text-sm">
+                    <strong>The Wolf:</strong> {wolf?.name}
+                  </p>
+                  <p className="text-sm">
+                    <strong>Most Voted:</strong> {mostVoted?.name || 'No votes?'}
+                  </p>
+                </div>
+
+                <div className={`${wolfGuessedCorrect ? 'bg-orange-50 border-orange-200' : 'bg-blue-50 border-blue-200'} border-2 rounded-xl p-4`}>
+                  <p className="font-bold text-lg mb-2">
+                    {wolfGuessedCorrect ? '🐺 Wolf Guessed Correctly!' : '🐑 Wolf Guessed Wrong'}
+                  </p>
+                  <p className="text-sm">
+                    <strong>Secret Word:</strong> {gameState.secretWord}
+                  </p>
+                  <p className="text-sm">
+                    <strong>Wolf&apos;s Guess:</strong> {gameState.wolfGuess}
+                  </p>
+                </div>
+
+                <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
+                  <p className="font-bold text-lg mb-3 text-center">Scoreboard</p>
+                  <div className="space-y-2">
+                    {(currentLobby?.players || [])
+                      .slice()
+                      .sort((a, b) => (b.score || 0) - (a.score || 0))
+                      .map((player, index) => (
+                        <div key={player.id} className="flex items-center justify-between">
+                          <span className="font-semibold">
+                            {index + 1}. {player.name}
+                          </span>
+                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold text-sm">
+                            {player.score || 0} pts
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={nextRound}
+                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg"
+              >
+                Next Round
+              </button>
+
+              {error && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      return null;
+    }
+
+    // React 18 root
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<RoboSheepGame />);
+  </script>
+</body>
+</html>
