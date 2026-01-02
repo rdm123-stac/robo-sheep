@@ -38,7 +38,9 @@ export async function handler(event) {
       : "";
 
     const resp = await client.responses.create({
-      model: "gpt-5-mini",
+      model: process.env.OPENAI_MODEL || "gpt-5-nano",
+      reasoning: { effort: "minimal" },
+      max_output_tokens: 450,
       input: [
         {
           role: "system",
