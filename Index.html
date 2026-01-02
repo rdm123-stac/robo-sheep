@@ -286,7 +286,7 @@
         setError('');
 
         try {
-          const response = await fetch("/api/generate-categories", {
+          const response = await fetch("/.netlify/functions/generate-categories", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt: aiPrompt.trim() })
@@ -1385,3 +1385,4 @@
   </script>
 </body>
 </html>
+
