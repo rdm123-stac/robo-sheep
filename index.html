@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>🐺 Robo Sheep 🐑</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(10px); }
-      to   { opacity: 1; transform: translateY(0); }
+      to { opacity: 1; transform: translateY(0); }
     }
     .fade-in { animation: fadeIn 0.3s ease-out; }
   </style>
@@ -25,19 +25,8 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!--
-    IMPORTANT (AI Categories):
-    This front-end expects a server endpoint at:
-      POST /api/generate-categories
-    that returns JSON like:
-      { "categories": [ { "category": "...", "words": ["...x10"] }, ...x3 ] }
-
-    The safest setup is a Firebase Cloud Function + Hosting rewrite that calls OpenAI.
-    (Do NOT put your OpenAI key in this HTML.)
-  -->
-
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useMemo } = React;
 
     // Firebase Config
     const firebaseConfig = {
@@ -186,101 +175,74 @@
         }
       };
 
-      // Always listen to lobby updates when in a lobby
+      // Listen to lobby updates
       useEffect(() => {
-        if (!lobbyCode) return;
+        if ((screen === 'lobby' || screen === 'game' || screen === 'clue' || screen === 'voting' || screen === 'wolf-guess' || screen === 'recap' || screen === 'category-select') && lobbyCode) {
+          const lobbyRef = database.ref(`lobbies/${lobbyCode}`);
 
-        const lobbyRef = database.ref(`lobbies/${lobbyCode}`);
-        const listener = lobbyRef.on('value', (snapshot) => {
-          if (!snapshot.exists()) return;
+          const listener = lobbyRef.on('value', (snapshot) => {
+            if (snapshot.exists()) {
+              const lobby = snapshot.val();
+              setCurrentLobby(lobby);
 
-          const lobby = snapshot.val();
-          setCurrentLobby(lobby);
+              // If game is playing and we're in lobby, check for game state
+              if (lobby.status === 'playing' && screen === 'lobby') {
+                database.ref(`games/${lobbyCode}`).once('value').then((gameSnapshot) => {
+                  if (gameSnapshot.exists()) {
+                    const game = gameSnapshot.val();
+                    setGameState(game);
+                    setScreen('game');
+                  }
+                });
+              }
 
-          // If lobby resets to waiting, clean up game UI state unless user is on home/create/join
-          setScreen((prev) => {
-            const isMainMenu = (prev === 'home' || prev === 'create' || prev === 'join');
-            if (isMainMenu) return prev;
-
-            if (lobby.status === 'waiting') {
-              // Only kick back if we were in game flow screens
-              if (['game', 'clue', 'voting', 'wolf-guess', 'recap'].includes(prev)) {
+              // If lobby reset to waiting, return to lobby
+              if (lobby.status === 'waiting' && (screen === 'game' || screen === 'clue' || screen === 'voting' || screen === 'wolf-guess' || screen === 'recap')) {
                 setGameState(null);
                 setShowRole(false);
                 setMyClue('');
                 setMyVote('');
                 setWolfGuess('');
-                return 'lobby';
+                setScreen('lobby');
               }
-              return prev;
             }
-
-            return prev;
           });
-        });
 
-        return () => lobbyRef.off('value', listener);
-      }, [lobbyCode]);
+          return () => lobbyRef.off('value', listener);
+        }
+      }, [screen, lobbyCode]);
 
-      // Always listen to game updates (including recap) so screens never get stuck
+      // Listen to game updates
       useEffect(() => {
-        if (!lobbyCode) return;
+        if ((screen === 'lobby' || screen === 'game' || screen === 'clue' || screen === 'voting' || screen === 'wolf-guess' || screen === 'recap') && lobbyCode) {
+          const gameRef = database.ref(`games/${lobbyCode}`);
+          const listener = gameRef.on('value', (snapshot) => {
+            if (snapshot.exists()) {
+              const game = snapshot.val();
+              setGameState(game);
 
-        const gameRef = database.ref(`games/${lobbyCode}`);
-        const listener = gameRef.on('value', (snapshot) => {
-          if (!snapshot.exists()) {
-            setGameState(null);
-            return;
-          }
+              // Auto-transition from lobby to game when game starts
+              if (screen === 'lobby' && game.phase === 'reveal') setScreen('game');
 
-          const game = snapshot.val();
-          setGameState(game);
+              // Auto-transition to clue phase UI
+              if (game.phase === 'clue' && screen !== 'clue') setScreen('clue');
 
-          setScreen((prev) => {
-            // don't hijack home/create/join
-            if (prev === 'home' || prev === 'create' || prev === 'join') return prev;
+              // Auto-transition to voting phase UI
+              if (game.phase === 'voting' && screen !== 'voting') setScreen('voting');
 
-            if (game.phase === 'reveal') return 'game';
-            if (game.phase === 'clue') return 'clue';
-            if (game.phase === 'voting') return 'voting';
-            if (game.phase === 'wolf-guess') return 'wolf-guess';
-            if (game.phase === 'recap') return 'recap';
+              // Auto-transition to wolf guess phase UI
+              if (game.phase === 'wolf-guess' && screen !== 'wolf-guess') setScreen('wolf-guess');
 
-            return prev;
-          });
-        });
-
-        return () => gameRef.off('value', listener);
-      }, [lobbyCode]);
-
-      // Auto-advance from REVEAL -> CLUE (leader triggers once)
-      useEffect(() => {
-        if (!gameState || !lobbyCode || !playerId) return;
-        if (gameState.phase !== 'reveal') return;
-
-        const leaderId = gameState.playerOrder?.[0];
-        if (leaderId !== playerId) return;
-
-        const REVEAL_MS = 8000; // tweak: 0 = immediate, 8000 = 8 seconds
-        const startedAt = gameState.startedAt || Date.now();
-        const elapsed = Date.now() - startedAt;
-        const remaining = Math.max(0, REVEAL_MS - elapsed);
-
-        const t = setTimeout(async () => {
-          try {
-            const phaseSnap = await database.ref(`games/${lobbyCode}/phase`).once('value');
-            if (phaseSnap.val() === 'reveal') {
-              await database.ref(`games/${lobbyCode}/phase`).set('clue');
+              // Auto-transition to recap UI
+              if (game.phase === 'recap' && screen !== 'recap') setScreen('recap');
             }
-          } catch (e) {
-            console.error('auto-advance to clue failed:', e);
-          }
-        }, remaining);
+          });
 
-        return () => clearTimeout(t);
-      }, [gameState?.phase, gameState?.startedAt, lobbyCode, playerId]);
+          return () => gameRef.off('value', listener);
+        }
+      }, [screen, lobbyCode]);
 
-      // AI categories via your server endpoint
+      // AI Categories via Netlify Function
       const generateAICategories = async () => {
         setIsGeneratingAI(true);
         setError('');
@@ -293,23 +255,19 @@
           });
 
           if (!response.ok) {
-            const txt = await response.text();
-            throw new Error(txt || "AI request failed");
+            const txt = await response.text().catch(() => '');
+            throw new Error(`HTTP ${response.status}: ${txt}`);
           }
 
           const parsed = await response.json();
-
-          if (
-            parsed?.categories?.length === 3 &&
-            parsed.categories.every(c => c?.category && Array.isArray(c.words) && c.words.length === 10)
-          ) {
+          if (parsed.categories && parsed.categories.length === 3) {
             setAiCategories(parsed.categories);
           } else {
-            setError("Invalid AI response format. Please try again.");
+            setError('Invalid AI response format. Please try again.');
           }
         } catch (err) {
-          console.error("AI generation error:", err);
-          setError("Failed to generate AI categories. Make sure /api/generate-categories is set up.");
+          console.error('AI generation error:', err);
+          setError('Failed to generate AI categories. Check your Netlify function + OPENAI_API_KEY.');
         } finally {
           setIsGeneratingAI(false);
         }
@@ -318,10 +276,11 @@
       const startGame = () => {
         if (!currentLobby) return;
 
-        // Determine who picks category (round-robin)
+        // Determine who picks category
         const roundNum = (currentLobby.roundNumber || 0) + 1;
         const orderStartIndex = (roundNum - 1) % currentLobby.players.length;
 
+        // Create ordered player list
         const orderedPlayers = [
           ...currentLobby.players.slice(orderStartIndex),
           ...currentLobby.players.slice(0, orderStartIndex)
@@ -353,27 +312,27 @@
           ...currentLobby.players.slice(0, orderStartIndex)
         ];
 
-        // Pick wolf from ordered players (ensures wolfId is from playerOrder)
+        // Wolf selection should be based on orderedPlayers length
         const wolfIndex = Math.floor(Math.random() * orderedPlayers.length);
 
         const game = {
-            lobbyCode,
-            category: categorySet.category,
-            words: categorySet.words,
-            secretWord: categorySet.words[secretWordIndex],
-            secretWordIndex,
-            wolfId: orderedPlayers[wolfIndex].id,
-            players: orderedPlayers,
-            playerOrder: orderedPlayers.map(p => p.id),
-            startedAt: Date.now(),
-            phase: 'reveal',
-            clues: {},
-            votes: {},
-            voteLocks: {},   // ✅ ADD THIS
-            wolfGuess: null,
-            roundNumber: roundNum
+          lobbyCode,
+          category: categorySet.category,
+          words: categorySet.words,
+          secretWord: categorySet.words[secretWordIndex],
+          secretWordIndex,
+          wolfId: orderedPlayers[wolfIndex].id,
+          players: orderedPlayers,
+          playerOrder: orderedPlayers.map(p => p.id),
+          startedAt: Date.now(),
+          phase: 'reveal',
+          clues: {},
+          votes: {},
+          voteLocks: {},      // ✅ supports "change until lock"
+          wolfGuess: null,
+          recap: null,
+          roundNumber: roundNum
         };
-
 
         try {
           const updatedLobby = { ...currentLobby, status: 'playing', roundNumber: roundNum };
@@ -388,6 +347,33 @@
           setError('Failed to start game. Please try again.');
         }
       };
+
+      // Auto-start clue phase after a short reveal window (host/first player only)
+      useEffect(() => {
+        if (gameState?.phase === 'reveal' && gameState?.startedAt && gameState?.playerOrder?.length) {
+          const firstPlayerId = gameState.playerOrder[0];
+          if (playerId !== firstPlayerId) return;
+
+          const interval = setInterval(async () => {
+            try {
+              const now = Date.now();
+              // 25 seconds reveal window
+              if (now - gameState.startedAt >= 25000) {
+                const snap = await database.ref(`games/${lobbyCode}/phase`).once('value');
+                if (snap.exists() && snap.val() === 'reveal') {
+                  await database.ref(`games/${lobbyCode}/phase`).set('clue');
+                }
+                clearInterval(interval);
+              }
+            } catch (e) {
+              // don't spam errors
+              clearInterval(interval);
+            }
+          }, 1500);
+
+          return () => clearInterval(interval);
+        }
+      }, [gameState?.phase, gameState?.startedAt, gameState?.playerOrder?.length, playerId, lobbyCode]);
 
       const startCluePhase = async () => {
         if (!gameState) return;
@@ -410,7 +396,7 @@
           setError('');
           await database.ref(`games/${lobbyCode}/clues/${playerId}`).set(myClue.trim());
 
-          // Check if all players have submitted (use fresh state)
+          // Check if all players have submitted
           const gameSnapshot = await database.ref(`games/${lobbyCode}`).once('value');
           const currentGame = gameSnapshot.val();
           if (!currentGame) return;
@@ -427,67 +413,59 @@
         }
       };
 
-      cconst updateVote = async (votedPlayerId) => {
-  try {
-    setError('');
-    const locked = !!gameState?.voteLocks?.[playerId];
-    if (locked) return; // can't change after locking
+      // ✅ Vote can be changed until lock-in
+      const updateVote = async (votedPlayerId) => {
+        try {
+          setError('');
+          const locked = !!gameState?.voteLocks?.[playerId];
+          if (locked) return;
 
-    await database.ref(`games/${lobbyCode}/votes/${playerId}`).set(votedPlayerId);
-    setMyVote(votedPlayerId);
-  } catch (err) {
-    console.error(err);
-    setError('Failed to submit vote.');
-  }
-};
+          await database.ref(`games/${lobbyCode}/votes/${playerId}`).set(votedPlayerId);
+          setMyVote(votedPlayerId);
+        } catch (err) {
+          console.error(err);
+          setError('Failed to submit vote.');
+        }
+      };
 
-const lockInVote = async () => {
-  try {
-    setError('');
+      const lockInVote = async () => {
+        try {
+          setError('');
+          const alreadyLocked = !!gameState?.voteLocks?.[playerId];
+          if (alreadyLocked) return;
 
-    const locked = !!gameState?.voteLocks?.[playerId];
-    if (locked) return;
+          const currentChoice = gameState?.votes?.[playerId] || myVote;
+          if (!currentChoice) {
+            setError('Pick someone before locking in.');
+            return;
+          }
 
-    const currentChoice = gameState?.votes?.[playerId] || myVote;
-    if (!currentChoice) {
-      setError('Pick someone before locking in.');
-      return;
-    }
+          await database.ref(`games/${lobbyCode}/voteLocks/${playerId}`).set(true);
 
-    await database.ref(`games/${lobbyCode}/voteLocks/${playerId}`).set(true);
+          // Check if everyone locked (fresh read)
+          const snap = await database.ref(`games/${lobbyCode}/voteLocks`).once('value');
+          const locks = snap.val() || {};
+          if (Object.keys(locks).length >= gameState.players.length) {
+            await database.ref(`games/${lobbyCode}/phase`).set('wolf-guess');
+          }
+        } catch (err) {
+          console.error(err);
+          setError('Failed to lock in vote.');
+        }
+      };
 
-    // Check if everyone locked
-    const snapshot = await database.ref(`games/${lobbyCode}/voteLocks`).once('value');
-    const locks = snapshot.val() || {};
-
-    if (Object.keys(locks).length === gameState.players.length) {
-      await database.ref(`games/${lobbyCode}/phase`).set('wolf-guess');
-    }
-  } catch (err) {
-    console.error(err);
-    setError('Failed to lock in vote.');
-  }
-};
-
-
-      // FIXED: wolf guess now does one atomic update + transitions cleanly (prevents getting stuck)
+      // ✅ Atomic update to avoid "stuck on wolf guess"
       const submitWolfGuess = async (guessedWord) => {
         try {
           setError('');
+          if (!gameState) return;
 
-          // Always compute from fresh DB state (not possibly-stale React state)
-          const [gameSnap, lobbySnap] = await Promise.all([
-            database.ref(`games/${lobbyCode}`).once('value'),
-            database.ref(`lobbies/${lobbyCode}`).once('value'),
-          ]);
+          // Fresh game read to ensure we have final votes/locks/clues
+          const gameSnap = await database.ref(`games/${lobbyCode}`).once('value');
+          const g = gameSnap.val();
+          if (!g) return;
 
-          const game = gameSnap.val();
-          const lobby = lobbySnap.val();
-
-          if (!game || !lobby) throw new Error('Game or lobby missing');
-          if (game.wolfGuess != null) return; // already guessed
-
-          const votes = game.votes || {};
+          const votes = g.votes || {};
           const voteCount = {};
           Object.values(votes).forEach(votedId => {
             voteCount[votedId] = (voteCount[votedId] || 0) + 1;
@@ -502,56 +480,52 @@ const lockInVote = async () => {
             }
           });
 
-          const wolfCaught = mostVotedId === game.wolfId;
-          const wolfGuessedCorrect = guessedWord === game.secretWord;
+          const wolfCaught = mostVotedId === g.wolfId;
+          const wolfGuessedCorrect = guessedWord === g.secretWord;
 
-          // Update scores based on lobby.players (source of truth for scores)
-          const updatedLobbyPlayers = (lobby.players || []).map(p => {
+          // Compute updated scores from lobby
+          const updatedPlayers = g.players.map(p => {
+            const lobbyPlayer = currentLobby?.players?.find(lp => lp.id === p.id);
             let scoreAdd = 0;
 
-            if (p.id === game.wolfId) {
-              // Wolf scoring
+            if (p.id === g.wolfId) {
               if (!wolfCaught && wolfGuessedCorrect) scoreAdd = 4;
               else if (wolfCaught && wolfGuessedCorrect) scoreAdd = 1;
             } else {
-              // Sheep scoring
-              if (wolfCaught) scoreAdd += 1;
-              if (!wolfGuessedCorrect) scoreAdd += 1;
+              if (wolfCaught) scoreAdd = 1;
+              if (!wolfGuessedCorrect) scoreAdd = 1;
             }
 
-            return { ...p, score: (p.score || 0) + scoreAdd };
+            return { ...p, score: (lobbyPlayer?.score || 0) + scoreAdd };
           });
 
-          // Atomic multi-path update so everyone transitions cleanly
-          const updates = {};
-          updates[`lobbies/${lobbyCode}/players`] = updatedLobbyPlayers;
-          updates[`games/${lobbyCode}/wolfGuess`] = guessedWord;
-          updates[`games/${lobbyCode}/recap`] = {
-            wolfCaught,
-            wolfGuessedCorrect,
-            mostVotedId,
-            wolfId: game.wolfId
+          const updatedLobby = {
+            ...currentLobby,
+            players: (currentLobby?.players || []).map(p => {
+              const up = updatedPlayers.find(x => x.id === p.id);
+              return up ? { ...p, score: up.score } : p;
+            })
           };
-          updates[`games/${lobbyCode}/phase`] = 'recap';
 
-          await database.ref().update(updates);
+          // Update lobby scores first
+          await database.ref(`lobbies/${lobbyCode}`).set(updatedLobby);
 
-          // optional immediate local transition (listener will also do it)
-          setScreen('recap');
+          // Atomic game update: wolfGuess + recap + phase
+          await database.ref(`games/${lobbyCode}`).update({
+            wolfGuess: guessedWord,
+            recap: { wolfCaught, wolfGuessedCorrect, mostVotedId, wolfId: g.wolfId },
+            phase: 'recap'
+          });
         } catch (err) {
-          console.error('submitWolfGuess error:', err);
+          console.error(err);
           setError('Failed to submit guess.');
         }
       };
 
       const nextRound = async () => {
         try {
-          const lobbySnap = await database.ref(`lobbies/${lobbyCode}`).once('value');
-          const lobby = lobbySnap.val();
-          if (!lobby) return;
-
-          const resetLobby = { ...lobby, status: 'waiting' };
-          await database.ref(`lobbies/${lobbyCode}`).set(resetLobby);
+          const updatedLobby = { ...currentLobby, status: 'waiting' };
+          await database.ref(`lobbies/${lobbyCode}`).set(updatedLobby);
           await database.ref(`games/${lobbyCode}`).remove();
 
           setGameState(null);
@@ -563,20 +537,17 @@ const lockInVote = async () => {
           setAiPrompt('');
           setError('');
 
-          // Determine next category picker based on NEXT round
-          const nextRoundNum = (resetLobby.roundNumber || 0) + 1;
-          const orderStartIndex = (nextRoundNum - 1) % resetLobby.players.length;
+          // Determine next category picker
+          const roundNum = (updatedLobby.roundNumber || 0) + 1;
+          const orderStartIndex = (roundNum - 1) % updatedLobby.players.length;
           const orderedPlayers = [
-            ...resetLobby.players.slice(orderStartIndex),
-            ...resetLobby.players.slice(0, orderStartIndex)
+            ...updatedLobby.players.slice(orderStartIndex),
+            ...updatedLobby.players.slice(0, orderStartIndex)
           ];
           const categoryPickerId = orderedPlayers[0].id;
 
-          if (playerId === categoryPickerId) {
-            setScreen('category-select');
-          } else {
-            setScreen('lobby');
-          }
+          if (playerId === categoryPickerId) setScreen('category-select');
+          else setScreen('lobby');
         } catch (err) {
           console.error(err);
           setError('Failed to start next round.');
@@ -794,27 +765,24 @@ const lockInVote = async () => {
                   <h3 className="font-bold text-gray-800">Players ({currentLobby.players.length})</h3>
                 </div>
                 <div className="space-y-2">
-                  {currentLobby.players
-                    .slice()
-                    .sort((a, b) => (b.score || 0) - (a.score || 0))
-                    .map((player) => (
-                      <div
-                        key={player.id}
-                        className="bg-gradient-to-r from-gray-50 to-gray-100 px-4 py-3 rounded-xl flex items-center justify-between"
-                      >
-                        <span className="font-semibold text-gray-800">{player.name}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold">
-                            {player.score || 0} pts
+                  {currentLobby.players.sort((a, b) => b.score - a.score).map((player) => (
+                    <div
+                      key={player.id}
+                      className="bg-gradient-to-r from-gray-50 to-gray-100 px-4 py-3 rounded-xl flex items-center justify-between"
+                    >
+                      <span className="font-semibold text-gray-800">{player.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold">
+                          {player.score} pts
+                        </span>
+                        {player.id === currentLobby.host && (
+                          <span className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full font-bold">
+                            HOST
                           </span>
-                          {player.id === currentLobby.host && (
-                            <span className="text-xs bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full font-bold">
-                              HOST
-                            </span>
-                          )}
-                        </div>
+                        )}
                       </div>
-                    ))}
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -839,6 +807,12 @@ const lockInVote = async () => {
                   <p className="text-purple-800 font-semibold">
                     Waiting for {categoryPicker.name} to choose category...
                   </p>
+                </div>
+              )}
+
+              {error && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
                 </div>
               )}
             </div>
@@ -997,9 +971,7 @@ const lockInVote = async () => {
               <div className="text-center mb-8">
                 <h2 className="text-3xl font-bold text-gray-800 mb-2">Round {gameState.roundNumber}</h2>
                 <p className="text-gray-600">Keep your screen private</p>
-                <p className="text-xs text-gray-500 mt-2">
-                  Clue phase starts automatically in a few seconds…
-                </p>
+                <p className="text-xs text-gray-500 mt-2">Clues auto-start in ~25 seconds</p>
               </div>
 
               <div className="mb-8">
@@ -1082,14 +1054,19 @@ const lockInVote = async () => {
                 </div>
               </div>
 
-              {/* Optional manual override button (kept) */}
               {myPlayerIndex === 0 && (
                 <button
                   onClick={startCluePhase}
                   className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-lg"
                 >
-                  Start Clue Phase (Manual)
+                  Start Clue Phase Now
                 </button>
+              )}
+
+              {error && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
               )}
             </div>
           </div>
@@ -1205,147 +1182,143 @@ const lockInVote = async () => {
         );
       }
 
-      // VOTING SCREEN
-if (screen === 'voting' && gameState) {
-  const isWolf = gameState.wolfId === playerId;
+      // VOTING SCREEN (words always visible + live vote counts + change until lock)
+      if (screen === 'voting' && gameState) {
+        const isWolf = gameState.wolfId === playerId;
 
-  const votes = gameState.votes || {};
-  const voteLocks = gameState.voteLocks || {};
-  const myLocked = !!voteLocks[playerId];
+        const votes = gameState.votes || {};
+        const voteLocks = gameState.voteLocks || {};
+        const myLocked = !!voteLocks[playerId];
 
-  // Live vote counts (updates automatically as votes change)
-  const voteCounts = {};
-  Object.values(votes).forEach((votedId) => {
-    voteCounts[votedId] = (voteCounts[votedId] || 0) + 1;
-  });
+        const voteCounts = useMemo(() => {
+          const counts = {};
+          Object.values(votes).forEach((votedId) => {
+            counts[votedId] = (counts[votedId] || 0) + 1;
+          });
+          return counts;
+        }, [votes]);
 
-  const myCurrentVote = votes[playerId] || myVote;
+        const myCurrentVote = votes[playerId] || myVote;
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in overflow-y-auto" style={{ maxHeight: '90vh' }}>
-        <h2 className="text-3xl font-bold text-gray-800 mb-4 text-center">Vote for the Wolf</h2>
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in overflow-y-auto" style={{ maxHeight: '90vh' }}>
+              <h2 className="text-3xl font-bold text-gray-800 mb-4 text-center">Vote for the Wolf</h2>
 
-        {/* ✅ Words always visible during voting */}
-        <div className="mb-6 bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
-          <p className="text-sm font-semibold text-purple-700 mb-3">
-            Category: {gameState.category}
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {gameState.words.map((word, index) => (
-              <div
-                key={index}
-                className={`px-3 py-2 rounded-lg font-semibold text-sm ${
-                  !isWolf && word === gameState.secretWord
-                    ? 'bg-yellow-400 text-yellow-900 border-2 border-yellow-600'
-                    : 'bg-white text-gray-700 border border-gray-200'
-                }`}
-              >
-                {word}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mb-4 bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
-          <p className="text-sm text-orange-800 text-center">
-            Pick who you think is the wolf 🐺 (you can change until you lock in)
-          </p>
-        </div>
-
-        {/* Vote buttons */}
-        <div className="space-y-2 mb-4">
-          {gameState.players.map((player) => {
-            const selected = myCurrentVote === player.id;
-            const count = voteCounts[player.id] || 0;
-
-            return (
-              <button
-                key={player.id}
-                onClick={() => updateVote(player.id)}
-                disabled={myLocked}
-                className={`w-full px-4 py-3 rounded-xl transition-all border-2 flex items-center justify-between gap-3
-                  ${myLocked ? 'opacity-70 cursor-not-allowed' : 'hover:scale-[1.01]'}
-                  ${selected ? 'bg-orange-100 border-orange-400' : 'bg-gray-50 border-gray-300 hover:border-orange-300'}
-                `}
-              >
-                <div className="text-left">
-                  <div className="font-semibold text-gray-800">
-                    {player.name}
-                    {player.id === playerId && " (You)"}
-                  </div>
-                  {gameState.clues?.[player.id] && (
-                    <div className="text-sm text-blue-600 mt-1">
-                      "{gameState.clues[player.id]}"
+              {/* Words visible */}
+              <div className="mb-6 bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-purple-700 mb-3">
+                  Category: {gameState.category}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {gameState.words.map((word, index) => (
+                    <div
+                      key={index}
+                      className={`px-3 py-2 rounded-lg font-semibold text-sm ${
+                        !isWolf && word === gameState.secretWord
+                          ? 'bg-yellow-400 text-yellow-900 border-2 border-yellow-600'
+                          : 'bg-white text-gray-700 border border-gray-200'
+                      }`}
+                    >
+                      {word}
                     </div>
-                  )}
+                  ))}
                 </div>
+              </div>
 
-                {/* ✅ Live vote count */}
-                <span className="text-xs bg-orange-200 text-orange-900 px-3 py-1 rounded-full font-bold">
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+              <div className="mb-4 bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
+                <p className="text-sm text-orange-800 text-center">
+                  Pick who you think is the wolf 🐺 (change anytime until you lock in)
+                </p>
+              </div>
 
-        {/* Lock-in section */}
-        {!myLocked ? (
-          <button
-            onClick={lockInVote}
-            disabled={!myCurrentVote}
-            className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Lock in my vote
-          </button>
-        ) : (
-          <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 text-center">
-            <Icon name="check" className="w-8 h-8 text-green-600 mx-auto mb-2" />
-            <p className="text-green-800 font-semibold">Vote locked in!</p>
-            <p className="text-sm text-green-700 mt-2">Waiting for others to lock in...</p>
-          </div>
-        )}
+              <div className="space-y-2 mb-4">
+                {gameState.players.map((player) => {
+                  const selected = myCurrentVote === player.id;
+                  const count = voteCounts[player.id] || 0;
 
-        {/* Lock progress */}
-        <div className="mt-6">
-          <h3 className="font-bold text-gray-800 mb-3">Lock-in Progress:</h3>
-          <div className="space-y-2">
-            {gameState.players.map((player) => {
-              const locked = !!voteLocks[player.id];
-              return (
-                <div key={player.id} className="bg-gray-50 px-4 py-3 rounded-xl flex items-center justify-between">
-                  <span className="font-semibold text-gray-800">{player.name}</span>
-                  {locked ? (
-                    <span className="text-xs bg-green-200 text-green-900 px-3 py-1 rounded-full font-bold flex items-center gap-2">
-                      <Icon name="check" className="w-4 h-4" />
-                      Locked
-                    </span>
-                  ) : (
-                    <span className="text-gray-400 text-sm">Choosing...</span>
-                  )}
+                  return (
+                    <button
+                      key={player.id}
+                      onClick={() => updateVote(player.id)}
+                      disabled={myLocked}
+                      className={`w-full px-4 py-3 rounded-xl transition-all border-2 flex items-center justify-between gap-3
+                        ${myLocked ? 'opacity-70 cursor-not-allowed' : 'hover:scale-[1.01]'}
+                        ${selected ? 'bg-orange-100 border-orange-400' : 'bg-gray-50 border-gray-300 hover:border-orange-300'}
+                      `}
+                    >
+                      <div className="text-left">
+                        <div className="font-semibold text-gray-800">
+                          {player.name}{player.id === playerId ? ' (You)' : ''}
+                        </div>
+                        {gameState.clues?.[player.id] && (
+                          <div className="text-sm text-blue-600 mt-1">
+                            "{gameState.clues[player.id]}"
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Live vote count */}
+                      <span className="text-xs bg-orange-200 text-orange-900 px-3 py-1 rounded-full font-bold">
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!myLocked ? (
+                <button
+                  onClick={lockInVote}
+                  disabled={!myCurrentVote}
+                  className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Lock in my vote
+                </button>
+              ) : (
+                <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4 text-center">
+                  <Icon name="check" className="w-8 h-8 text-green-600 mx-auto mb-2" />
+                  <p className="text-green-800 font-semibold">Vote locked in!</p>
+                  <p className="text-sm text-green-700 mt-2">Waiting for others to lock in...</p>
                 </div>
-              );
-            })}
+              )}
+
+              <div className="mt-6">
+                <h3 className="font-bold text-gray-800 mb-3">Lock-in Progress:</h3>
+                <div className="space-y-2">
+                  {gameState.players.map((player) => {
+                    const locked = !!voteLocks[player.id];
+                    return (
+                      <div key={player.id} className="bg-gray-50 px-4 py-3 rounded-xl flex items-center justify-between">
+                        <span className="font-semibold text-gray-800">{player.name}</span>
+                        {locked ? (
+                          <span className="text-xs bg-green-200 text-green-900 px-3 py-1 rounded-full font-bold flex items-center gap-2">
+                            <Icon name="check" className="w-4 h-4" />
+                            Locked
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-sm">Choosing...</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {error && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-
-        {error && (
-          <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
-            {error}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-
+        );
+      }
 
       // WOLF GUESS SCREEN
       if (screen === 'wolf-guess' && gameState) {
         const isWolf = gameState.wolfId === playerId;
-        const hasGuessed = gameState.wolfGuess !== null && gameState.wolfGuess !== undefined;
+        const hasGuessed = gameState.wolfGuess !== null;
 
         return (
           <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
@@ -1416,7 +1389,7 @@ if (screen === 'voting' && gameState) {
                     <strong>The Wolf:</strong> {wolf?.name}
                   </p>
                   <p className="text-sm">
-                    <strong>Most Voted:</strong> {mostVoted?.name || 'No votes?'}
+                    <strong>Most Voted:</strong> {mostVoted?.name}
                   </p>
                 </div>
 
@@ -1428,26 +1401,23 @@ if (screen === 'voting' && gameState) {
                     <strong>Secret Word:</strong> {gameState.secretWord}
                   </p>
                   <p className="text-sm">
-                    <strong>Wolf&apos;s Guess:</strong> {gameState.wolfGuess}
+                    <strong>Wolf's Guess:</strong> {gameState.wolfGuess}
                   </p>
                 </div>
 
                 <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
                   <p className="font-bold text-lg mb-3 text-center">Scoreboard</p>
                   <div className="space-y-2">
-                    {(currentLobby?.players || [])
-                      .slice()
-                      .sort((a, b) => (b.score || 0) - (a.score || 0))
-                      .map((player, index) => (
-                        <div key={player.id} className="flex items-center justify-between">
-                          <span className="font-semibold">
-                            {index + 1}. {player.name}
-                          </span>
-                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold text-sm">
-                            {player.score || 0} pts
-                          </span>
-                        </div>
-                      ))}
+                    {(currentLobby?.players || []).slice().sort((a, b) => b.score - a.score).map((player, index) => (
+                      <div key={player.id} className="flex items-center justify-between">
+                        <span className="font-semibold">
+                          {index + 1}. {player.name}
+                        </span>
+                        <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full font-bold text-sm">
+                          {player.score} pts
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1472,9 +1442,7 @@ if (screen === 'voting' && gameState) {
       return null;
     }
 
-    // React 18 root
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<RoboSheepGame />);
+    ReactDOM.render(<RoboSheepGame />, document.getElementById('root'));
   </script>
 </body>
 </html>
