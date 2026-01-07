@@ -190,6 +190,14 @@
             const isMainMenu = (prev === 'home' || prev === 'create' || prev === 'join');
             if (isMainMenu) return prev;
 
+            // Check if someone won (15+ points) and we're in recap
+            if (prev === 'recap') {
+              const winner = lobby.players.find(p => (p.score || 0) >= 15);
+              if (winner) {
+                return 'winner';
+              }
+            }
+
             if (lobby.status === 'waiting') {
               if (['game', 'clue', 'voting', 'wolf-guess', 'recap'].includes(prev)) {
                 setGameState(null);
@@ -263,6 +271,20 @@
 
         return () => clearTimeout(t);
       }, [gameState?.phase, gameState?.startedAt, lobbyCode, playerId]);
+
+      // Check for winner when on recap screen
+      useEffect(() => {
+        if (screen !== 'recap' || !currentLobby) return;
+
+        const winner = currentLobby.players.find(p => (p.score || 0) >= 15);
+        if (winner) {
+          // Small delay to let everyone see the recap first
+          const timer = setTimeout(() => {
+            setScreen('winner');
+          }, 1000);
+          return () => clearTimeout(timer);
+        }
+      }, [screen, currentLobby]);
 
       const generateAICategories = async () => {
         setIsGeneratingAI(true);
@@ -502,6 +524,15 @@
           const lobby = lobbySnap.val();
           if (!lobby) return;
 
+          // Check if any player has won (15+ points)
+          const winner = lobby.players.find(p => (p.score || 0) >= 15);
+          
+          if (winner) {
+            // Someone won! Show winner screen
+            setScreen('winner');
+            return;
+          }
+
           const resetLobby = { ...lobby, status: 'waiting' };
           await database.ref(`lobbies/${lobbyCode}`).set(resetLobby);
           await database.ref(`games/${lobbyCode}`).remove();
@@ -531,6 +562,77 @@
         } catch (err) {
           console.error(err);
           setError('Failed to start next round.');
+        }
+      };
+
+      const startNewGame = async () => {
+        try {
+          const lobbySnap = await database.ref(`lobbies/${lobbyCode}`).once('value');
+          const lobby = lobbySnap.val();
+          if (!lobby) return;
+
+          // Reset all player scores to 0
+          const resetPlayers = lobby.players.map(p => ({ ...p, score: 0 }));
+          const resetLobby = { 
+            ...lobby, 
+            status: 'waiting', 
+            players: resetPlayers,
+            roundNumber: 0 
+          };
+          
+          await database.ref(`lobbies/${lobbyCode}`).set(resetLobby);
+          await database.ref(`games/${lobbyCode}`).remove();
+
+          setGameState(null);
+          setShowRole(false);
+          setMyClue('');
+          setSelectedVote('');
+          setWolfGuess('');
+          setAiCategories([]);
+          setAiPrompt('');
+          setError('');
+          setScreen('lobby');
+        } catch (err) {
+          console.error(err);
+          setError('Failed to start new game.');
+        }
+      };
+
+      const continuePlayingAfterWin = async () => {
+        try {
+          const lobbySnap = await database.ref(`lobbies/${lobbyCode}`).once('value');
+          const lobby = lobbySnap.val();
+          if (!lobby) return;
+
+          const resetLobby = { ...lobby, status: 'waiting' };
+          await database.ref(`lobbies/${lobbyCode}`).set(resetLobby);
+          await database.ref(`games/${lobbyCode}`).remove();
+
+          setGameState(null);
+          setShowRole(false);
+          setMyClue('');
+          setSelectedVote('');
+          setWolfGuess('');
+          setAiCategories([]);
+          setAiPrompt('');
+          setError('');
+
+          const nextRoundNum = (resetLobby.roundNumber || 0) + 1;
+          const orderStartIndex = (nextRoundNum - 1) % resetLobby.players.length;
+          const orderedPlayers = [
+            ...resetLobby.players.slice(orderStartIndex),
+            ...resetLobby.players.slice(0, orderStartIndex)
+          ];
+          const categoryPickerId = orderedPlayers[0].id;
+
+          if (playerId === categoryPickerId) {
+            setScreen('category-select');
+          } else {
+            setScreen('lobby');
+          }
+        } catch (err) {
+          console.error(err);
+          setError('Failed to continue playing.');
         }
       };
 
@@ -1359,6 +1461,9 @@
         const { wolfCaught, wolfGuessedCorrect, mostVotedId, wolfId } = gameState.recap;
         const wolf = gameState.players.find(p => p.id === wolfId);
         const mostVoted = gameState.players.find(p => p.id === mostVotedId);
+        
+        // Check if someone won
+        const winner = currentLobby?.players.find(p => (p.score || 0) >= 15);
 
         return (
           <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 p-6 flex items-center justify-center">
@@ -1411,14 +1516,116 @@
                       ))}
                   </div>
                 </div>
+
+                {winner && (
+                  <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 text-center">
+                    <p className="text-lg font-bold text-yellow-800 mb-1">
+                      🎉 {winner.name} reached 15 points! 🎉
+                    </p>
+                    <p className="text-sm text-yellow-700">
+                      Winner screen loading...
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <button
-                onClick={nextRound}
-                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg"
-              >
-                Next Round
-              </button>
+              {!winner && (
+                <button
+                  onClick={nextRound}
+                  className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg"
+                >
+                  Next Round
+                </button>
+              )}
+
+              {error && (
+                <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // WINNER SCREEN
+      if (screen === 'winner' && currentLobby) {
+        const winner = currentLobby.players
+          .slice()
+          .sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-yellow-400 via-orange-500 to-red-500 p-6 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 fade-in">
+              <div className="text-center mb-6">
+                <div className="inline-block bg-gradient-to-r from-yellow-400 to-orange-500 p-6 rounded-full mb-4 animate-bounce">
+                  <Icon name="trophy" className="w-20 h-20 text-white" />
+                </div>
+                <h1 className="text-5xl font-bold text-gray-800 mb-4">🎉 WINNER! 🎉</h1>
+                <div className="bg-gradient-to-r from-yellow-100 to-orange-100 border-4 border-yellow-400 rounded-2xl p-6 mb-4">
+                  <p className="text-3xl font-bold text-gray-800 mb-2">{winner.name}</p>
+                  <p className="text-xl text-gray-700">
+                    <span className="text-4xl font-bold text-orange-600">{winner.score}</span> points
+                  </p>
+                </div>
+                <p className="text-gray-600 text-lg">First to reach 15 points!</p>
+              </div>
+
+              <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-6 mb-6">
+                <p className="font-bold text-lg mb-4 text-center text-gray-800">Final Scoreboard</p>
+                <div className="space-y-3">
+                  {currentLobby.players
+                    .slice()
+                    .sort((a, b) => (b.score || 0) - (a.score || 0))
+                    .map((player, index) => (
+                      <div 
+                        key={player.id} 
+                        className={`flex items-center justify-between p-3 rounded-xl ${
+                          index === 0 
+                            ? 'bg-gradient-to-r from-yellow-200 to-orange-200 border-2 border-yellow-400' 
+                            : 'bg-white border border-gray-200'
+                        }`}
+                      >
+                        <span className="font-semibold text-gray-800">
+                          {index === 0 && '👑 '}
+                          {index + 1}. {player.name}
+                        </span>
+                        <span className={`px-4 py-1 rounded-full font-bold text-sm ${
+                          index === 0 
+                            ? 'bg-yellow-400 text-yellow-900' 
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {player.score || 0} pts
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <button
+                  onClick={startNewGame}
+                  className="w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                >
+                  <Icon name="sparkles" className="w-5 h-5" />
+                  New Game (Reset Scores)
+                </button>
+                
+                <button
+                  onClick={continuePlayingAfterWin}
+                  className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                >
+                  <Icon name="play" className="w-5 h-5" />
+                  Keep Playing
+                </button>
+
+                <button
+                  onClick={returnHome}
+                  className="w-full bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-xl transition-all"
+                >
+                  Exit to Home
+                </button>
+              </div>
 
               {error && (
                 <div className="mt-4 bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
